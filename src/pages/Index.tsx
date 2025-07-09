@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Input } from "@/components/ui/input";
 import Icon from "@/components/ui/icon";
+import { spotifyAPI, SpotifyTrack, SpotifyPlaylist } from "@/lib/spotify";
 
 const Index = () => {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -11,6 +12,14 @@ const Index = () => {
   const [volume, setVolume] = useState([75]);
   const [progress, setProgress] = useState([30]);
   const [activeTab, setActiveTab] = useState("home");
+  const [isSpotifyConnected, setIsSpotifyConnected] = useState(false);
+  const [spotifyTracks, setSpotifyTracks] = useState<SpotifyTrack[]>([]);
+  const [spotifyPlaylists, setSpotifyPlaylists] = useState<SpotifyPlaylist[]>(
+    [],
+  );
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SpotifyTrack[]>([]);
 
   const tracks = [
     {
@@ -58,6 +67,102 @@ const Index = () => {
     { id: "settings", label: "Настройки", icon: "Settings" },
   ];
 
+  // Проверка авторизации Spotify и обработка колбэка
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get("code");
+
+    if (code) {
+      // Обмениваем код на токен
+      spotifyAPI.exchangeToken(code).then((success) => {
+        if (success) {
+          setIsSpotifyConnected(true);
+          loadSpotifyData();
+          // Очищаем URL от параметров
+          window.history.replaceState(
+            {},
+            document.title,
+            window.location.pathname,
+          );
+        }
+      });
+    } else if (spotifyAPI.isAuthenticated()) {
+      setIsSpotifyConnected(true);
+      loadSpotifyData();
+    }
+  }, []);
+
+  // Загрузка данных из Spotify
+  const loadSpotifyData = async () => {
+    try {
+      const [user, userPlaylists, savedTracks] = await Promise.all([
+        spotifyAPI.getCurrentUser(),
+        spotifyAPI.getUserPlaylists(10),
+        spotifyAPI.getSavedTracks(20),
+      ]);
+
+      setCurrentUser(user);
+      setSpotifyPlaylists(userPlaylists);
+      setSpotifyTracks(savedTracks);
+    } catch (error) {
+      console.error("Failed to load Spotify data:", error);
+    }
+  };
+
+  // Подключение к Spotify
+  const connectSpotify = () => {
+    spotifyAPI.authorize();
+  };
+
+  // Отключение от Spotify
+  const disconnectSpotify = () => {
+    spotifyAPI.logout();
+    setIsSpotifyConnected(false);
+    setCurrentUser(null);
+    setSpotifyPlaylists([]);
+    setSpotifyTracks([]);
+  };
+
+  // Поиск треков
+  const searchTracks = async (query: string) => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    try {
+      const results = await spotifyAPI.searchTracks(query, 20);
+      setSearchResults(results);
+    } catch (error) {
+      console.error("Search failed:", error);
+    }
+  };
+
+  // Форматирование данных Spotify трека для локального использования
+  const formatSpotifyTrack = (track: SpotifyTrack) => ({
+    id: track.id,
+    title: track.name,
+    artist: track.artists.map((a) => a.name).join(", "),
+    duration: spotifyAPI.formatDuration(track.duration_ms),
+    cover:
+      track.album.images[0]?.url ||
+      "/img/faaa697c-b6b1-4f1f-84de-52b8e62ae8ce.jpg",
+  });
+
+  // Объединение локальных и Spotify треков
+  const allTracks = [...tracks, ...spotifyTracks.map(formatSpotifyTrack)];
+
+  // Объединение локальных и Spotify плейлистов
+  const allPlaylists = [
+    ...playlists,
+    ...spotifyPlaylists.map((playlist) => ({
+      id: playlist.id,
+      name: playlist.name,
+      count: playlist.tracks.total,
+      icon: "Music" as const,
+    })),
+  ];
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 text-white overflow-hidden">
       {/* Background Effects */}
@@ -91,13 +196,48 @@ const Index = () => {
             ))}
           </nav>
 
+          {/* Spotify Connection */}
+          {!isSpotifyConnected ? (
+            <div className="mb-6">
+              <Button
+                onClick={connectSpotify}
+                className="w-full bg-green-600 hover:bg-green-700 text-white border-0"
+              >
+                <Icon name="Music" size={16} className="mr-2" />
+                Подключить Spotify
+              </Button>
+            </div>
+          ) : (
+            <div className="mb-6 p-3 bg-green-600/20 border border-green-500/30 rounded-lg">
+              <div className="flex items-center space-x-2 mb-2">
+                <Icon name="Music" size={16} className="text-green-400" />
+                <span className="text-sm text-green-400">
+                  Spotify подключен
+                </span>
+              </div>
+              {currentUser && (
+                <p className="text-xs text-gray-300">
+                  {currentUser.display_name}
+                </p>
+              )}
+              <Button
+                onClick={disconnectSpotify}
+                variant="ghost"
+                size="sm"
+                className="text-xs text-gray-400 hover:text-white mt-1 p-0 h-auto"
+              >
+                Отключить
+              </Button>
+            </div>
+          )}
+
           {/* Playlists */}
           <div>
             <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">
               Плейлисты
             </h3>
             <div className="space-y-2">
-              {playlists.map((playlist) => (
+              {allPlaylists.map((playlist) => (
                 <button
                   key={playlist.id}
                   className="w-full flex items-center space-x-3 px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-white/10 transition-all duration-200"
@@ -145,6 +285,13 @@ const Index = () => {
                 />
                 <Input
                   placeholder="Поиск музыки, исполнителей..."
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    if (isSpotifyConnected) {
+                      searchTracks(e.target.value);
+                    }
+                  }}
                   className="pl-10 bg-white/10 border-white/20 text-white placeholder-gray-400 focus:bg-white/20"
                 />
               </div>
@@ -187,10 +334,12 @@ const Index = () => {
                 {/* Recent Tracks */}
                 <div>
                   <h3 className="text-xl font-bold mb-4">
-                    Недавно проигранные
+                    {isSpotifyConnected
+                      ? "Ваша музыка из Spotify"
+                      : "Недавно проигранные"}
                   </h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {tracks.map((track, index) => (
+                    {allTracks.slice(0, 8).map((track, index) => (
                       <Card
                         key={track.id}
                         className="bg-white/5 border-white/10 hover:bg-white/10 transition-all duration-300 cursor-pointer group"
@@ -359,24 +508,75 @@ const Index = () => {
             {activeTab === "search" && (
               <div className="space-y-6">
                 <h2 className="text-2xl font-bold">Поиск</h2>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {[
-                    "Поп",
-                    "Рок",
-                    "Электроника",
-                    "Хип-хоп",
-                    "Джаз",
-                    "Классика",
-                    "Indie",
-                    "R&B",
-                  ].map((genre) => (
-                    <Card
-                      key={genre}
-                      className="bg-gradient-to-br from-purple-600/30 to-pink-600/30 border-purple-500/30 p-6 text-center hover:scale-105 transition-transform cursor-pointer"
-                    >
-                      <h3 className="font-bold text-white">{genre}</h3>
-                    </Card>
-                  ))}
+
+                {searchResults.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-4">
+                      Результаты поиска
+                    </h3>
+                    <div className="space-y-2">
+                      {searchResults.map((track, index) => {
+                        const formattedTrack = formatSpotifyTrack(track);
+                        return (
+                          <div
+                            key={track.id}
+                            className="flex items-center space-x-4 p-3 rounded-lg hover:bg-white/5 transition-colors duration-200 group"
+                          >
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="w-8 h-8 rounded-full bg-purple-600/20 hover:bg-purple-600 text-purple-400 hover:text-white transition-all duration-200"
+                              onClick={() => {
+                                setCurrentTrack(allTracks.length + index);
+                                setIsPlaying(!isPlaying);
+                              }}
+                            >
+                              <Icon name="Play" size={14} />
+                            </Button>
+                            <img
+                              src={formattedTrack.cover}
+                              alt={formattedTrack.title}
+                              className="w-12 h-12 rounded-lg object-cover"
+                            />
+                            <div className="flex-1">
+                              <h4 className="font-medium text-white">
+                                {formattedTrack.title}
+                              </h4>
+                              <p className="text-gray-400 text-sm">
+                                {formattedTrack.artist}
+                              </p>
+                            </div>
+                            <span className="text-gray-500 text-sm">
+                              {formattedTrack.duration}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <h3 className="text-lg font-semibold mb-4">Жанры</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {[
+                      "Поп",
+                      "Рок",
+                      "Электроника",
+                      "Хип-хоп",
+                      "Джаз",
+                      "Классика",
+                      "Indie",
+                      "R&B",
+                    ].map((genre) => (
+                      <Card
+                        key={genre}
+                        className="bg-gradient-to-br from-purple-600/30 to-pink-600/30 border-purple-500/30 p-6 text-center hover:scale-105 transition-transform cursor-pointer"
+                      >
+                        <h3 className="font-bold text-white">{genre}</h3>
+                      </Card>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
@@ -462,16 +662,16 @@ const Index = () => {
           {/* Track Info */}
           <div className="flex items-center space-x-3 min-w-0 flex-1">
             <img
-              src={tracks[currentTrack]?.cover}
-              alt={tracks[currentTrack]?.title}
+              src={allTracks[currentTrack]?.cover}
+              alt={allTracks[currentTrack]?.title}
               className="w-12 h-12 rounded-lg object-cover"
             />
             <div className="min-w-0">
               <h4 className="font-medium text-white truncate">
-                {tracks[currentTrack]?.title}
+                {allTracks[currentTrack]?.title}
               </h4>
               <p className="text-gray-400 text-sm truncate">
-                {tracks[currentTrack]?.artist}
+                {allTracks[currentTrack]?.artist}
               </p>
             </div>
             <Button variant="ghost" size="sm">
@@ -531,7 +731,7 @@ const Index = () => {
                 className="flex-1"
               />
               <span className="text-xs text-gray-400">
-                {tracks[currentTrack]?.duration}
+                {allTracks[currentTrack]?.duration}
               </span>
             </div>
           </div>
